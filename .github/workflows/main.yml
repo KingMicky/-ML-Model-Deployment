@@ -1,0 +1,61 @@
+name: CI/CD for Kafka-ML Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      zookeeper:
+        image: bitnami/zookeeper:latest
+        ports:
+          - 2181:2181
+      kafka:
+        image: bitnami/kafka:latest
+        env:
+          KAFKA_BROKER_ID: 1
+          KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+          ALLOW_PLAINTEXT_LISTENER: "yes"
+        ports:
+          - 9092:9092
+        options: --health-cmd="test $(curl -s -o /dev/null -w '%{http_code}' http://localhost:9092) = 200" --health-interval=10s --health-timeout=5s --health-retries=3
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.9
+
+      - name: Install Docker Compose
+        run: sudo apt-get install -y docker-compose
+
+      - name: Build and Run Services
+        run: |
+          docker-compose up -d --build
+          docker ps
+
+      - name: Run Linting
+        run: |
+          pip install flake8
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=88 --statistics
+
+      - name: Test API
+        run: |
+          sleep 10  # Wait for API to start
+          curl -X POST -H "Content-Type: application/json" \
+          -d '{"temperature": 25.5, "humidity": 45.2}' \
+          http://localhost:8000/predict
+
+      - name: Tear Down Services
+        if: always()
+        run: docker-compose down
